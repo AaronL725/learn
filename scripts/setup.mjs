@@ -52,14 +52,6 @@ export function configureProject(project = process.cwd()) {
     const transport = `command = ${JSON.stringify(process.execPath)}\nargs = ${JSON.stringify([path.join(skill, 'scripts/learn.mjs')])}\ncwd = ${JSON.stringify(root)}\nstartup_timeout_sec = 20\ntool_timeout_sec = 120\n`;
     fs.writeFileSync(target, template + transport);
   }
-  const agentsPath = path.join(root, 'AGENTS.md');
-  const start = '<!-- ai-learning:start -->', end = '<!-- ai-learning:end -->';
-  const block = `${start}\nFor learning or explanation requests, read the installed Learn skill at ${path.join(skill, 'SKILL.md')}. Its resources are skill-relative; all notes, images and state belong to this project. Configuration and engineering tasks do not invoke the teaching process.\n${end}`;
-  let instructions = fs.existsSync(agentsPath) ? fs.readFileSync(agentsPath, 'utf8') : '';
-  const first = instructions.indexOf(start), last = instructions.indexOf(end);
-  if (first >= 0 && last >= first) instructions = instructions.slice(0, first) + block + instructions.slice(last + end.length);
-  else instructions = `${instructions.trimEnd()}${instructions.trim() ? '\n\n' : ''}${block}\n`;
-  fs.writeFileSync(agentsPath, instructions);
   const note = path.join(root, 'learning-log.md');
   if (!fs.existsSync(note)) fs.writeFileSync(note, '# Learning log\n', { flag: 'wx' });
   return root;

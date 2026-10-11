@@ -240,7 +240,7 @@ export async function sessionHook(input) {
     child.unref(); state.pid = child.pid; saveState(id, state);
   });
   await flush(id);
-  return { hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: `Learning log sessionId: ${id}. Use this sessionId for native quiz preparation and learn MCP md_log/md_unlog. Log: ${readState(id).file || '(disabled)'}. Chat and native request_user_input questions/answers/notes mirror automatically; prepared quizzes are deterministically graded on submission. Read AGENTS.md and preserve the teach skill's full process.` } };
+  return { hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: `Learning log sessionId: ${id}. Use this sessionId for native quiz preparation and learn MCP md_log/md_unlog. Log: ${readState(id).file || '(disabled)'}. Chat and native request_user_input questions/answers/notes mirror automatically; prepared quizzes are deterministically graded on submission. Preserve the teach skill's full process.` } };
 }
 if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   if (process.argv[2] === '--watch') {
