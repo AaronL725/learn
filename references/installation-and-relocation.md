@@ -1,6 +1,6 @@
 # Installation and relocation
 
-`learn/` is the complete Codex skill package. Relocate the entire folder rather than SKILL.md alone. The package retains the original teaching body, the visualize workflow, three subagent templates, question/log/image adapters, and dependency lockfile.
+`learn/` is the complete Codex skill package. Relocate the entire folder rather than SKILL.md alone. The package retains the foundational teaching principles and adaptive teaching workflow, the visualize workflow, three subagent templates, question/log/image adapters, and dependency lockfile.
 
 ## Install in the Codex skills directory
 
@@ -26,22 +26,23 @@ node "$HOME/.codex/skills/learn/scripts/setup.mjs" --project /path/to/your-learn
 
 setup installs Mermaid dependencies inside the skill according to the lockfile. In the specified project, it generates the learn MCP configuration, native question feature flag, and subagent feature flag in `.codex/config.toml`; three learning roles in `.codex/agents/`; and SessionStart/SessionEnd logging hooks. It preserves unrelated MCP servers, existing instructions, and other hooks, and does not modify global Codex configuration. It preserves and reports an error for an existing personal role with the same name; resolve the naming conflict first.
 
-On first use, trust the project in Codex and inspect and trust the two logging hooks through `/hooks`, then restart or resume the session. Enter `$learn Teach me…`, or simply make a learning request. The skill automatically reads the complete original teaching workflow, probes understanding first, presents a plan, and teaches only after confirmation. The language of the skill files does not determine the lesson language; respond in the learner's language.
+On first use, trust the project in Codex and inspect and trust the two logging hooks through `/hooks`, then restart or resume the session. Enter `$learn Teach me…`, or simply make a learning request. On activation the skill reads the teaching workflow, recalls relevant personal evidence and activity checkpoints, and adapts diagnostics and the teaching path to the requested goal. The language of the skill files does not determine the lesson language; respond in the learner's language.
 
-Open the learning project in Obsidian and read `learning-log.md`. If the file does not exist, setup creates an empty log with its heading; existing content is never overwritten. Use natural language to switch to any existing note. Questions still prioritize native `request_user_input`: select an answer, optionally add reasoning with Tab, and submit with Enter. For multi-select, put the complete set of indices on the first notes line and reasoning on subsequent lines.
+Open the learning project in Obsidian. New projects create an English-named topic note when the goal is known, rather than an empty universal log. Existing `learning-log.md` notes remain usable. Ask to continue in a new note or resume a particular activity; use natural language to link any existing note. Open `~/Documents/Knowledge Atlas` as a separate Obsidian vault after the first lesson creates it. Questions still prioritize native `request_user_input`: select an answer, optionally add reasoning with Tab, and submit with Enter. For multi-select, put the complete set of indices on the first notes line and reasoning on subsequent lines.
 
 ## Path ownership
 
 | Content | Location |
 | --- | --- |
-| Skill instructions, original teaching body, runtime scripts, dependencies | Actual skill installation directory |
-| Default learning log | Invoking project's `/learning-log.md` |
+| Skill instructions, teaching workflow, runtime scripts, dependencies | Actual skill installation directory |
+| Topic notes and existing legacy logs | Invoking project, or an explicitly linked external note |
+| Profile, concept network, shared evidence and course snapshots | Configured personal Atlas (default `~/Documents/Knowledge Atlas`) |
 | Question caches, log bindings, locks, error records | Invoking project's `/.learn/` |
 | Published images | Invoking project's `/viz/` |
 | Temporary image source and previews | Operating system temporary directory |
 | Codex project configuration and role copies | Invoking project's `/.codex/` |
 
-Run quiz and other scripts with the current working directory set to the project for this session; the script's location does not determine the output location. setup explicitly binds MCP and hooks to that project. Each project has independent state; learning data is not written into the skill installation directory. `.learn/` contains private answers and conversation state; add it to the project's `.gitignore`.
+Run quiz and other scripts with the current working directory set to the project for this session; the script's location does not determine the output location. setup explicitly binds MCP and hooks to that project. Each subject project has independent activities and note bindings; related concepts are shared through the personal Atlas. Learning data is not written into the skill installation directory. See [knowledge and activities](knowledge-and-activities.md) for activation, persistence and editing. `.learn/` contains private answers and conversation state; add it to the project's `.gitignore`.
 
 After moving the skill or project, or upgrading Node, rerun setup for the affected projects, restart Codex, and inspect `/hooks` again. Existing Codex sessions do not automatically reload old MCP processes. The absolute paths generated by setup belong only to the current project's installation configuration; the package does not hardcode a local username, project path, or Node Cellar path.
 

@@ -3,6 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { ROOT, callout, statePath, flush } from './md-log.mjs';
+import { enqueue, syncPending, identifier, atomic } from './memory.mjs';
 
 export function normalizeOptions(input = [], unique = false) {
   if (!Array.isArray(input)) throw new Error('options must be an array');
@@ -128,10 +129,46 @@ export function prepareNative(name, params, compact = false) {
   const q = prepare(name, params), id = `${name === 'quiz' ? 'quiz' : 'ask'}_${crypto.randomBytes(16).toString('hex')}`;
   const request = nativeRequest(q, id, compact);
   fs.mkdirSync(path.dirname(quizPath(id)), { recursive: true });
-  fs.writeFileSync(quizPath(id), JSON.stringify({ sessionId: params.sessionId, q, request }), { mode: 0o600 });
+  if (params.learning !== undefined && params.learning !== false && (!params.learning || typeof params.learning !== 'object' || Array.isArray(params.learning))) throw new Error('learning must be an object or false');
+  const learning = params.learning === false ? null : { ...(state.learning || {}), ...(params.learning || {}), sessionId: params.sessionId };
+  if (learning) {
+    for (const key of ['courseId', 'activityId', 'noteId', 'sessionId']) if (learning[key] !== undefined) identifier(learning[key]);
+    if (learning.conceptIds !== undefined) {
+      if (!Array.isArray(learning.conceptIds)) throw new Error('learning.conceptIds must be an array');
+      learning.conceptIds.forEach(identifier);
+    }
+    if (learning.scope !== undefined && typeof learning.scope !== 'string') throw new Error('learning.scope must be text');
+  }
+  fs.writeFileSync(quizPath(id), JSON.stringify({ sessionId: params.sessionId, q, request, learning }), { mode: 0o600 });
   return { id, request };
 }
 export function resolveNative(id, response, request, sessionId) {
+  const lock = `${quizPath(id)}.lock`, start = Date.now();
+  fs.mkdirSync(path.dirname(lock), { recursive: true });
+  for (;;) {
+    try {
+      const fd = fs.openSync(lock, 'wx', 0o600);
+      try { fs.writeFileSync(fd, String(process.pid)); } finally { fs.closeSync(fd); }
+      break;
+    } catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+      try {
+        const pid = Number(fs.readFileSync(lock, 'utf8'));
+        if (Number.isInteger(pid) && pid > 0) {
+          try { process.kill(pid, 0); } catch (error) {
+            if (error.code === 'ESRCH') { fs.rmSync(lock, { force: true }); continue; }
+            if (error.code !== 'EPERM') throw error;
+          }
+        } else if (Date.now() - fs.statSync(lock).mtimeMs > 10000) { fs.rmSync(lock, { force: true }); continue; }
+      } catch (error) { if (error.code !== 'ENOENT') throw error; }
+      if (Date.now() - start > 1500) throw new Error('Question is being graded; retry the same response');
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+    }
+  }
+  try { return resolveSaved(id, response, request, sessionId); }
+  finally { fs.rmSync(lock, { force: true }); }
+}
+function resolveSaved(id, response, request, sessionId) {
   let file = quizPath(id), saved = JSON.parse(fs.readFileSync(file, 'utf8'));
   if (sessionId && saved.sessionId !== sessionId) {
     let ancestors = [];
@@ -143,13 +180,22 @@ export function resolveNative(id, response, request, sessionId) {
   if (saved.result?.status === 'answered') {
     const retried = nativeAnswer(saved.q, request || saved.request, response);
     if (JSON.stringify(retried) !== JSON.stringify(saved.result)) throw new Error('Question already graded; prepare a new question instead of overwriting its answer');
+    if (saved.evidence) enqueue('record', saved.evidence);
     return { ...saved.result, feedback: feedbackBlock(saved.result, saved.q.name) };
   }
   // The transcript's actual request wins if a runtime needed the compact 2–3 option representation.
   const result = nativeAnswer(saved.q, request || saved.request, response);
   if (result.status !== 'unanswered') {
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, JSON.stringify({ ...saved, result }), { mode: 0o600 });
+    const evidence = saved.q.name === 'quiz' && result.status === 'answered' && saved.learning?.activityId ? {
+      id: `evidence_${id}_${saved.sessionId}`, kind: 'quiz', occurredAt: new Date().toISOString(),
+      context: { ...saved.learning, sessionId: saved.sessionId },
+      questionId: id, displayedRequest: request || saved.request, preparedQuestion: saved.q, result,
+      projectPath: ROOT, notePath: saved.learning.notePath,
+    } : null;
+    const updated = { ...saved, result, ...(evidence ? { evidence } : {}) };
+    atomic(file, JSON.stringify(updated));
+    if (evidence) enqueue('record', evidence);
   }
   return { ...result, ...(result.status === 'answered' ? { feedback: feedbackBlock(result, saved.q.name) } : {}) };
 }
@@ -161,11 +207,16 @@ if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import
       await flush(sessionId || saved.sessionId);
       const branch = sessionId && quizPath(file, sessionId);
       saved = JSON.parse(fs.readFileSync(branch && fs.existsSync(branch) ? branch : quizPath(file), 'utf8'));
-      console.log(JSON.stringify(saved.result ? { ...saved.result, feedback: feedbackBlock(saved.result, saved.q.name) } : { status: 'unanswered', request: saved.request, message: 'Re-ask the same question; no valid submitted answer.' }));
+      if (saved.evidence) enqueue('record', saved.evidence);
+      const memorySync = await syncPending();
+      console.log(JSON.stringify(saved.result ? { ...saved.result, feedback: feedbackBlock(saved.result, saved.q.name), memorySync } : { status: 'unanswered', request: saved.request, message: 'Re-ask the same question; no valid submitted answer.' }));
     } else {
       const input = JSON.parse(fs.readFileSync(file, 'utf8'));
       if (action === 'prepare') console.log(JSON.stringify(prepareNative(input.name || 'quiz', input, process.argv.includes('--compact'))));
-      else if (action === 'grade') console.log(JSON.stringify(resolveNative(input.id, input.response, input.request, input.sessionId)));
+      else if (action === 'grade') {
+        const result = resolveNative(input.id, input.response, input.request, input.sessionId);
+        console.log(JSON.stringify({ ...result, memorySync: await syncPending() }));
+      }
       else throw new Error('Usage: node <skill>/scripts/quiz.mjs prepare|grade <JSON-file> [--compact], or result <id> [sessionId]');
     }
   } catch (e) { console.error(e.message); process.exitCode = 1; }

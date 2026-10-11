@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 import os from 'node:os';
 import * as zlib from 'node:zlib';
 import { resolveNative, feedbackBlock } from './quiz.mjs';
+import { ensureProject, atlasRoot, syncPending } from './memory.mjs';
 
 export const ROOT = path.resolve(process.cwd());
 const STATE = path.join(ROOT, '.learn', 'sessions');
@@ -168,6 +169,9 @@ export async function flush(id) {
     const state = readState(id);
     if (!state.transcript || !fs.existsSync(state.transcript)) return;
     state.cursors ||= {};
+    if (state.file && !fs.existsSync(state.file)) {
+      state.missingLog = state.file; state.file = null; saveState(id, state);
+    }
     // Grading must keep working while /md-unlog pauses mirroring; retain each note's backfill cursor.
     const cursor = state.file || '(unlinked)';
     let offset = state.cursors[cursor] || 0;
@@ -183,7 +187,7 @@ export async function flush(id) {
     // shortcut: Codex transcript JSONL is not a stable API; update this parser when Codex changes its wire format.
     const origin = /([a-f0-9-]{36})\.jsonl$/.exec(state.transcript)?.[1] || id;
     let entries = parseEntries(buffer.subarray(0, end + 1), origin, offset);
-    if (!offset) entries = [...inheritedEntries(entries.find(e => e.record.type === 'session_meta')?.record.payload), ...entries];
+    if (!offset && !state.forwardOnly?.[cursor]) entries = [...inheritedEntries(entries.find(e => e.record.type === 'session_meta')?.record.payload), ...entries];
     for (const entry of activeBranch(entries)) {
       const { record, position, origin } = entry;
       const rolledBack = offset && record.type === 'event_msg' && record.payload?.type === 'thread_rolled_back';
@@ -194,11 +198,25 @@ export async function flush(id) {
     state.cursors[cursor] = offset + end + 1;
     saveState(id, state);
   });
+  return syncPending();
 }
-export async function setLog(id, file) {
+export async function setLog(id, file, mode = 'backfill', learning) {
+  if (!['backfill', 'forward'].includes(mode)) throw new Error('Log mode must be backfill or forward');
   const resolved = file ? notePath(file) : null;
+  await flush(id); // Finish the old note before changing its binding.
   await withLock(statePath(id), () => {
-    const state = readState(id); state.file = resolved; saveState(id, state);
+    const state = readState(id);
+    if (resolved && mode === 'forward' && state.file !== resolved) {
+      state.cursors ||= {};
+      const bytes = fs.readFileSync(state.transcript);
+      state.cursors[resolved] = bytes.lastIndexOf(10) + 1;
+      state.forwardOnly ||= {}; state.forwardOnly[resolved] = true;
+    }
+    state.file = resolved;
+    if (resolved) delete state.missingLog;
+    if (learning) state.learning = learning;
+    else if (resolved && state.learning && resolved !== state.learning.notePath) state.learning = null;
+    saveState(id, state);
   });
   await flush(id);
   return { sessionId: id, file: resolved, status: resolved ? 'linked' : 'unlinked' };
@@ -232,7 +250,7 @@ export async function sessionHook(input) {
     const header = fs.existsSync(input.transcript_path) ? fs.readFileSync(input.transcript_path, 'utf8').split('\n', 1)[0] : '';
     const parentId = header ? JSON.parse(header).payload?.forked_from_id : null;
     const parent = parentId && fs.existsSync(statePath(parentId)) ? readState(parentId) : null;
-    let state = fs.existsSync(file) ? readState(id) : { file: parent ? parent.file : notePath('learning-log.md'), cursors: {}, ancestors: parentId ? [parentId, ...(parent?.ancestors || [])] : [] };
+    let state = fs.existsSync(file) ? readState(id) : { file: parent ? parent.file : fs.existsSync(path.join(ROOT, 'learning-log.md')) ? notePath('learning-log.md') : null, learning: parent?.learning ? { ...parent.learning, sessionId: id } : null, cursors: {}, ancestors: parentId ? [parentId, ...(parent?.ancestors || [])] : [] };
     if (state.transcript && state.transcript !== input.transcript_path) { state.cursors = {}; state.nativeRequests = {}; }
     state.transcript = input.transcript_path;
     if (watcherAlive(id, state.pid)) { saveState(id, state); return; }
@@ -240,7 +258,8 @@ export async function sessionHook(input) {
     child.unref(); state.pid = child.pid; saveState(id, state);
   });
   await flush(id);
-  return { hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: `Learning log sessionId: ${id}. Use this sessionId for native quiz preparation and learn MCP md_log/md_unlog. Log: ${readState(id).file || '(disabled)'}. Chat and native request_user_input questions/answers/notes mirror automatically; prepared quizzes are deterministically graded on submission. Preserve the teach skill's full process.` } };
+  const project = ensureProject();
+  return { hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: `Learning log sessionId: ${id}. Use this sessionId for native quiz preparation and learn MCP md_log/md_unlog. Log: ${readState(id).file || '(disabled)'}. ${readState(id).missingLog ? `Previous note unavailable: ${readState(id).missingLog}; reopen its activity or relink the moved note. ` : ''}Chat and native request_user_input questions/answers/notes mirror automatically; prepared quizzes are deterministically graded on submission. Course ID: ${project.courseId}. Personal memory location: ${atlasRoot()}. Read memory and activity checkpoints only when learn is activated; follow its adaptive teaching workflow.` } };
 }
 if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   if (process.argv[2] === '--watch') {

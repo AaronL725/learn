@@ -10,11 +10,12 @@ import { ROOT, setLog } from './md-log.mjs';
 const exec = promisify(execFile);
 const DEPS = path.join(path.dirname(fileURLToPath(import.meta.url)), 'visual-tools/node_modules');
 const CHROME = ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/Applications/Chromium.app/Contents/MacOS/Chromium'].find(p => fs.existsSync(p));
-const STAGING = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-learn-'));
+let STAGING;
+function staging() { return STAGING ||= fs.mkdtempSync(path.join(os.tmpdir(), 'codex-learn-')); }
 const object = (properties, required = []) => ({ type: 'object', properties, required, additionalProperties: false });
 const string = description => ({ type: 'string', description });
 const tools = [
-  { name: 'md_log', description: 'Link an EXISTING regular file and backfill this session without overwriting its content. Resume keeps the link. Also handles the user’s /md-log request.', inputSchema: object({ sessionId: string('From SessionStart.'), filepath: string('Existing file path, absolute or project-relative.') }, ['sessionId', 'filepath']) },
+  { name: 'md_log', description: 'Link an EXISTING regular file and backfill this session without overwriting its content. Resume keeps the link. Also handles the user’s /md-log request.', inputSchema: object({ sessionId: string('From SessionStart.'), filepath: string('Existing file path, absolute or project-relative.'), mode: { type: 'string', enum: ['backfill', 'forward'], description: 'Default backfill; forward starts at the current transcript position.' } }, ['sessionId', 'filepath']) },
   { name: 'md_unlog', description: 'Stop mirroring this session. Also handles /md-unlog.', inputSchema: object({ sessionId: string('From SessionStart.') }, ['sessionId']) },
   ...['mermaid', 'svg'].flatMap(kind => [
     { name: `write_${kind}`, description: `Write FULL ${kind} source to an isolated managed file. Returns session; pass that exact session to edit/render. No render yet.`, inputSchema: object({ source: string('Complete source.') }, ['source']) },
@@ -34,7 +35,7 @@ async function visual(name, p) {
   if (action === 'write') {
     if (typeof p.source !== 'string' || !p.source.trim()) throw new Error('source must be nonempty');
     if (kind === 'svg' && !/<svg[\s>]/.test(p.source)) throw new Error('A complete SVG document is required');
-    const session = crypto.randomUUID(), file = path.join(STAGING, `${session}.${kind === 'svg' ? 'svg' : 'mmd'}`);
+    const session = crypto.randomUUID(), file = path.join(staging(), `${session}.${kind === 'svg' ? 'svg' : 'mmd'}`);
     fs.writeFileSync(file, p.source.trim()); managed.set(session, { kind, file });
     return textResult({ session, path: file, lines: p.source.trim().split('\n').length });
   }
@@ -51,9 +52,9 @@ async function visual(name, p) {
     return textResult({ session: p.session, path: file, snippet, message: 'Applied edit. Render and inspect.' });
   }
   if (!CHROME) throw new Error('Install Chrome or Chromium to render visuals');
-  const png = path.join(STAGING, `${crypto.randomUUID()}.png`);
+  const png = path.join(staging(), `${crypto.randomUUID()}.png`);
   if (kind === 'mermaid') {
-    const config = path.join(STAGING, 'puppeteer.json');
+    const config = path.join(staging(), 'puppeteer.json');
     fs.writeFileSync(config, JSON.stringify({ executablePath: CHROME }));
     await exec(path.join(DEPS, '.bin/mmdc'), ['-i', file, '-o', png, '-p', config, '-s', '2', '-b', 'white'], { timeout: 120000, maxBuffer: 1024 * 1024 });
   } else {
@@ -96,7 +97,7 @@ export async function callTool(name, params, signal = new AbortController().sign
   if (!spec) throw new Error(`Unknown tool: ${name}`);
   if (!params || typeof params !== 'object') throw new Error('arguments must be an object');
   for (const key of spec.inputSchema.required) if (params[key] === undefined) throw new Error(`${key} is required`);
-  if (name === 'md_log' || name === 'md_unlog') return textResult(await setLog(params.sessionId, name === 'md_log' ? params.filepath : null));
+  if (name === 'md_log' || name === 'md_unlog') return textResult(await setLog(params.sessionId, name === 'md_log' ? params.filepath : null, params.mode));
   return visual(name, params);
 }
 export async function serve() {
@@ -127,6 +128,6 @@ export async function serve() {
     })();
   }
   for (const controller of running.values()) controller.abort();
-  fs.rmSync(STAGING, { recursive: true, force: true });
+  if (STAGING) fs.rmSync(STAGING, { recursive: true, force: true });
 }
 if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) await serve();

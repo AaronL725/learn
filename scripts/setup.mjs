@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
+import { ensureProject } from './memory.mjs';
 const skill = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export function projectConfig(config, node, script, project = process.cwd()) {
   function set(section, key, value) {
@@ -52,8 +53,7 @@ export function configureProject(project = process.cwd()) {
     const transport = `command = ${JSON.stringify(process.execPath)}\nargs = ${JSON.stringify([path.join(skill, 'scripts/learn.mjs')])}\ncwd = ${JSON.stringify(root)}\nstartup_timeout_sec = 20\ntool_timeout_sec = 120\n`;
     fs.writeFileSync(target, template + transport);
   }
-  const note = path.join(root, 'learning-log.md');
-  if (!fs.existsSync(note)) fs.writeFileSync(note, '# Learning log\n', { flag: 'wx' });
+  ensureProject(root);
   return root;
 }
 if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
