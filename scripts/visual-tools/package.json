@@ -1,0 +1,10 @@
+{
+  "name": "@learn/visual-tools",
+  "version": "0.1.0",
+  "description": "Local Mermaid renderer; reused by the Codex MCP adapter.",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "@mermaid-js/mermaid-cli": "11.16.0"
+  }
+}

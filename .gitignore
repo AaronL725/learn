@@ -1,0 +1,8 @@
+.DS_Store
+node_modules/
+.learn/
+viz/
+learning-log.md
+.env
+.env.*
+*.log
